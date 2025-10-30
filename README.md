@@ -89,9 +89,7 @@ import cv2
 import mediapipe as mp
 import math
 import numpy as np
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from pulsectl import Pulse
 ```
 ***
 Solution APIs 
@@ -104,23 +102,21 @@ mp_hands = mp.solutions.hands
 
 Volume Control Library Usage 
 ```py
-devices = AudioUtilities.GetSpeakers()
-interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-volume = cast(interface, POINTER(IAudioEndpointVolume))
-```
-***
-Getting Volume Range using `volume.GetVolumeRange()` Method
-```py
-volRange = volume.GetVolumeRange()
-minVol , maxVol , volBar, volPer= volRange[0] , volRange[1], 400, 0
+# Initialize PulseAudio interface
+pulse = Pulse('hand-volume-control')
+sink = pulse.get_sink_by_name(pulse.server_info().default_sink_name)
+
+# Volume bar settings
+volBar = 400
+volPer = 0
 ```
 ***
 Setting up webCam using OpenCV
 ```py
 wCam, hCam = 640, 480
 cam = cv2.VideoCapture(0)
-cam.set(3,wCam)
-cam.set(4,hCam)
+cam.set(cv2.CAP_PROP_FRAME_WIDTH, wCam)
+cam.set(cv2.CAP_PROP_FRAME_HEIGHT, hCam)
 ```
 ***
 Using MediaPipe Hand Landmark Model for identifying Hands 
@@ -175,37 +171,42 @@ if length < 50:
     cv2.line(image,(x1,y1),(x2,y2),(0,0,255),3)
 ```
 ***
-Converting Length range into Volume range using `numpy.interp()`
+Converting Length range into Volume range and Setting Volume
 ```py
-vol = np.interp(length, [50, 220], [minVol, maxVol])
-```
-***
-Changing System Volume using `volume.SetMasterVolumeLevel()` method
-```py
-volume.SetMasterVolumeLevel(vol, None)
+# Map distance (50 to 220) -> volume (0.0 to 1.0)
+vol = np.interp(length, [50, 220], [0.0, 1.0])
+vol = np.clip(vol, 0.0, 1.0)  # Ensure within bounds
+
+# Set system volume
+pulse.volume_set_all_chans(sink, vol)
+
+# Visual volume bar
 volBar = np.interp(length, [50, 220], [400, 150])
 volPer = np.interp(length, [50, 220], [0, 100])
 ```
 ***
 Drawing Volume Bar using `cv2.rectangle()` method
 ```py
+# Draw volume bar
 cv2.rectangle(image, (50, 150), (85, 400), (0, 0, 0), 3)
 cv2.rectangle(image, (50, int(volBar)), (85, 400), (0, 0, 0), cv2.FILLED)
-cv2.putText(image, f'{int(volPer)} %', (40, 450), cv2.FONT_HERSHEY_COMPLEX,
-        1, (0, 0, 0), 3)}
+cv2.putText(image, f'{int(volPer)}%', (40, 450), cv2.FONT_HERSHEY_COMPLEX,
+            1, (0, 0, 0), 3)
+```
+***
+Displaying Output and Cleanup
+```py
+# Show image
+cv2.imshow('Hand Volume Control', image)
 
-```
-***
-Displaying Output using `cv2.imshow` method
-```py
-cv2.imshow('handDetector', image) 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-      break
-```
-***
-Closing webCam
-```py
+# Press 'q' to quit
+if cv2.waitKey(1) & 0xFF == ord('q'):
+    break
+
+# Cleanup
 cam.release()
+cv2.destroyAllWindows()
+pulse.close()
 ```
 ***
 
