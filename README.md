@@ -7,14 +7,37 @@
 > This Project uses OpenCV and MediaPipe to Control system volume 
 
 ## 💾 REQUIREMENTS
+
+### System Dependencies (Arch Linux)
+```bash
+# Install XWayland for OpenCV support under Sway
+sudo pacman -S xorg-xwayland
+
+# Install PulseAudio development files if not already installed
+sudo pacman -S libpulse
+```
+
+### Python Dependencies
 + opencv-python
 + mediapipe
-+ comtypes
 + numpy
-+ pycaw
++ pulsectl
 
 ```bash
 pip install -r requirements.txt
+```
+
+### Running Under Sway/Wayland
+If you get a blank window when running under Sway/Wayland, you have two options:
+
+1. Run with XWayland (Recommended):
+```bash
+env QT_QPA_PLATFORM=xcb python main.py
+```
+
+2. Alternative: Install OpenCV with X11 support from AUR:
+```bash
+yay -S opencv-with-x11
 ```
 ***
 ### MEDIAPIPE
