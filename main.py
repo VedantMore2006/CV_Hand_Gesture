@@ -2,84 +2,104 @@ import cv2
 import mediapipe as mp
 import math
 import numpy as np
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from pulsectl import Pulse
 
-# solution APIs
+# Initialize PulseAudio interface
+pulse = Pulse('hand-volume-control')
+sink = pulse.get_sink_by_name(pulse.server_info().default_sink_name)
+
+# Mediapipe setup
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_hands = mp.solutions.hands
 
-# Volume Control Library Usage 
-devices = AudioUtilities.GetSpeakers()
-interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-volume = cast(interface, POINTER(IAudioEndpointVolume))
-volRange = volume.GetVolumeRange()
-minVol , maxVol , volBar, volPer= volRange[0] , volRange[1], 400, 0
-
 # Webcam Setup
 wCam, hCam = 640, 480
 cam = cv2.VideoCapture(0)
-cam.set(3,wCam)
-cam.set(4,hCam)
+cam.set(cv2.CAP_PROP_FRAME_WIDTH, wCam)
+cam.set(cv2.CAP_PROP_FRAME_HEIGHT, hCam)
 
-# Mediapipe Hand Landmark Model
+# Volume bar settings
+volBar = 400
+volPer = 0
+
+# Hand detection
 with mp_hands.Hands(
     model_complexity=0,
     min_detection_confidence=0.5,
-    min_tracking_confidence=0.5) as hands:
+    min_tracking_confidence=0.5
+) as hands:
 
-  while cam.isOpened():
-    success, image = cam.read()
+    while cam.isOpened():
+        success, image = cam.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
 
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = hands.process(image)
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    if results.multi_hand_landmarks:
-      for hand_landmarks in results.multi_hand_landmarks:
-        mp_drawing.draw_landmarks(
-            image,
-            hand_landmarks,
-            mp_hands.HAND_CONNECTIONS,
-            mp_drawing_styles.get_default_hand_landmarks_style(),
-            mp_drawing_styles.get_default_hand_connections_style()
-            )
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = hands.process(image)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-    # multi_hand_landmarks method for Finding postion of Hand landmarks      
-    lmList = []
-    if results.multi_hand_landmarks:
-      myHand = results.multi_hand_landmarks[0]
-      for id, lm in enumerate(myHand.landmark):
-        h, w, c = image.shape
-        cx, cy = int(lm.x * w), int(lm.y * h)
-        lmList.append([id, cx, cy])          
+        lmList = []
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    image,
+                    hand_landmarks,
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style()
+                )
 
-    # Assigning variables for Thumb and Index finger position
-    if len(lmList) != 0:
-      x1, y1 = lmList[4][1], lmList[4][2]
-      x2, y2 = lmList[8][1], lmList[8][2]
+            # Get landmarks of first detected hand
+            myHand = results.multi_hand_landmarks[0]
+            for id, lm in enumerate(myHand.landmark):
+                h, w, _ = image.shape
+                cx, cy = int(lm.x * w), int(lm.y * h)
+                lmList.append([id, cx, cy])
 
-      # Marking Thumb and Index finger
-      cv2.circle(image, (x1,y1),15,(255,255,255))  
-      cv2.circle(image, (x2,y2),15,(255,255,255))   
-      cv2.line(image,(x1,y1),(x2,y2),(0,255,0),3)
-      length = math.hypot(x2-x1,y2-y1)
-      if length < 50:
-        cv2.line(image,(x1,y1),(x2,y2),(0,0,255),3)
+        # Thumb (4) and Index (8) finger tips
+        if len(lmList) != 0:
+            x1, y1 = lmList[4][1], lmList[4][2]  # Thumb
+            x2, y2 = lmList[8][1], lmList[8][2]  # Index
 
-      vol = np.interp(length, [50, 220], [minVol, maxVol])
-      volume.SetMasterVolumeLevel(vol, None)
-      volBar = np.interp(length, [50, 220], [400, 150])
-      volPer = np.interp(length, [50, 220], [0, 100])
+            # Draw circles and line
+            cv2.circle(image, (x1, y1), 15, (255, 255, 255), cv2.FILLED)
+            cv2.circle(image, (x2, y2), 15, (255, 255, 255), cv2.FILLED)
+            cv2.line(image, (x1, y1), (x2, y2), (0, 255, 0), 3)
 
-      # Volume Bar
-      cv2.rectangle(image, (50, 150), (85, 400), (0, 0, 0), 3)
-      cv2.rectangle(image, (50, int(volBar)), (85, 400), (0, 0, 0), cv2.FILLED)
-      cv2.putText(image, f'{int(volPer)} %', (40, 450), cv2.FONT_HERSHEY_COMPLEX,
-                1, (0, 0, 0), 3)
-    
-    cv2.imshow('handDetector', image) 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-      break
+            # Calculate distance
+            length = math.hypot(x2 - x1, y2 - y1)
+
+            # Change color if fingers close
+            if length < 50:
+                cv2.line(image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+            # Map distance (50 to 220) -> volume (0.0 to 1.0)
+            vol = np.interp(length, [50, 220], [0.0, 1.0])
+            vol = np.clip(vol, 0.0, 1.0)  # Ensure within bounds
+
+            # Set system volume
+            pulse.volume_set_all_chans(sink, vol)
+
+            # Visual volume bar
+            volBar = np.interp(length, [50, 220], [400, 150])
+            volPer = np.interp(length, [50, 220], [0, 100])
+
+            # Draw volume bar
+            cv2.rectangle(image, (50, 150), (85, 400), (0, 0, 0), 3)
+            cv2.rectangle(image, (50, int(volBar)), (85, 400), (0, 0, 0), cv2.FILLED)
+            cv2.putText(image, f'{int(volPer)}%', (40, 450), cv2.FONT_HERSHEY_COMPLEX,
+                        1, (0, 0, 0), 3)
+
+        # Show image
+        cv2.imshow('Hand Volume Control', image)
+
+        # Press 'q' to quit
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+# Cleanup
 cam.release()
+cv2.destroyAllWindows()
+pulse.close()
